@@ -1,0 +1,5 @@
+system_name: ${env.env_name}/${env.scenario.task_name}/ff_mz/unprioritized_buffer
+
+# --- RL hyperparameters ---
+priority_exponent: 0 # exponent for the prioritised experience replay
+importance_sampling_exponent: 0 # exponent for the importance sampling weights
