@@ -24,6 +24,7 @@ To adjust number of learners, please modify `num_learners` in respective configu
 
 ## Acknowledgments
 
+```bibtex
 @misc{toledo2024stoix,
     title={Stoix: Distributed Single-Agent Reinforcement Learning End-to-End in JAX},
     doi = {10.5281/zenodo.10916257},
@@ -32,3 +33,4 @@ To adjust number of learners, please modify `num_learners` in respective configu
     year = {2024},
     url = {https://github.com/EdanToledo/Stoix},
 }
+```
