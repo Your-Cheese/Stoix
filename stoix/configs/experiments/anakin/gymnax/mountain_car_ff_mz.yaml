@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+  - default_ff_mz
+  - _self_
+
+arch:
+  update_batch_size: 8 # Number of vectorised gradient updates per device.
+  total_num_envs: 256  # Total Number of vectorised environments across all devices and batched_updates. Needs to be divisible by n_devices*update_batch_size.
+  total_timesteps: 196608 # Set the total environment steps.
+  num_evaluation: 8 # Number of evenly spaced evaluations to perform during training.
+
+system:
+  rollout_length: 8 # Number of environment steps per vectorised environment.
+  epochs: 64 # Number of epochs per training data batch.
+  warmup_steps: 8  # Number of steps to collect before training.
+  total_buffer_size: 2048 # Total effective size of the replay buffer across all devices and vectorised update steps. This means each device has a buffer of size buffer_size//num_devices which is further divided by the update_batch_size. This value must be divisible by num_devices*update_batch_size.
+  total_batch_size: 256 # Total effective number of samples to train on. This means each device has a batch size of batch_size/num_devices which is further divided by the update_batch_size. This value must be divisible by num_devices*update_batch_size.
+  sample_sequence_length: 6 # Number of steps to consider for each element of the batch.
+  priority_exponent: 0 # exponent for the prioritised experience replay
+  importance_sampling_exponent: 0 # exponent for the importance sampling weights
+  ent_coef: 0.0 # Entropy regularisation term for loss function.
+  gamma: 0.997 # Discounting factor.
+  n_steps: 10 # Number of steps to use for bootstrapped returns.
+  vf_coef: 1.0 # Critic weight in loss function.

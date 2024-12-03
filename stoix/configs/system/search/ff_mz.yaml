@@ -4,30 +4,49 @@
 # history. It also does not do tiling and encoding of actions in a 2D plane. A non-priority buffer is used as well.
 # Additionally, the search method used can be chosen between muzero mcts and gumbel mcts from mctx.
 
-system_name: ff_mz # Name of the system.
+system_name: ${env.scenario.name}/ff_mz/total_num_envs=${arch.total_num_envs}/optimizer=${system.optimizer._target_}/lr_schedule=${system.optimizer.learning_rate._target_}/priority_exponent=${system.priority_exponent}/vf_coef=${system.vf_coef}/total_buffer_size=${system.total_buffer_size}/total_batch_size=${system.total_batch_size}/rollout_length=${system.rollout_length}/epochs=${system.epochs}/unmasked_episode_done_higher_importance_weights # Name of the system.
 
 # --- RL hyperparameters ---
-lr: 3e-4 # Learning rate for entire algorithm.
 rollout_length: 8 # Number of environment steps per vectorised environment.
-epochs: 8 # Number of epochs per training data batch.
+epochs: 64 # Number of epochs per training data batch.
 warmup_steps: 16  # Number of steps to collect before training.
-total_buffer_size: 25_000 # Total effective size of the replay buffer across all devices and vectorised update steps. This means each device has a buffer of size buffer_size//num_devices which is further divided by the update_batch_size. This value must be divisible by num_devices*update_batch_size.
-total_batch_size: 32 # Total effective number of samples to train on. This means each device has a batch size of batch_size/num_devices which is further divided by the update_batch_size. This value must be divisible by num_devices*update_batch_size.
+total_buffer_size: 512 # Total effective size of the replay buffer across all devices and vectorised update steps. This means each device has a buffer of size buffer_size//num_devices which is further divided by the update_batch_size. This value must be divisible by num_devices*update_batch_size.
+total_batch_size: 128 # Total effective number of samples to train on. This means each device has a batch size of batch_size/num_devices which is further divided by the update_batch_size. This value must be divisible by num_devices*update_batch_size.
 sample_sequence_length: 6 # Number of steps to consider for each element of the batch.
 period : 1 # Period of the sampled sequences.
-gamma: 0.99 # Discounting factor.
+priority_exponent: 1 # exponent for the prioritised experience replay
+importance_sampling_exponent: 1 # exponent for the importance sampling weights
+gamma: 0.997 # Discounting factor.
 n_steps: 5 # Number of steps to use for bootstrapped returns.
 ent_coef: 0.0 # Entropy regularisation term for loss function.
-vf_coef: 0.25 # Critic weight in
+vf_coef: 0.25 # Critic weight in loss function.
+# weight_decay: 1e-4 # Weight decay for the optimizer.
 max_grad_norm: 0.5 # Maximum norm of the gradients for a weight update.
-decay_learning_rates: False # Whether learning rates should be linearly decayed during training.
 num_simulations: 25 # Number of simulations to run.
 max_depth: ~ # Maximum depth of the search tree.
 search_method : muzero # Search method to use. Options: gumbel, muzero.
 search_method_kwargs: {} # Additional kwargs for the search method.
+transform_method: muzero # Transform method to use. Options: muzero, unbiased.
+transform_function: signed_hyperbolic # Transform function to use. Options: signed_hyperbolic, symlog.
 critic_vmin: -300.0 # Minimum value for the critic.
 critic_vmax: 300.0 # Maximum value for the critic.
 critic_num_atoms: 601 # Number of atoms for the categorical critic head.
 reward_vmin: -300.0 # Minimum value for the reward.
 reward_vmax: 300.0 # Maximum value for the reward.
 reward_num_atoms: 601 # Number of atoms for the categorical reward head.
+
+optimizer:
+  # _target_: optax.sgd
+  _target_: optax.adamw
+  learning_rate:
+    _target_: optax.constant_schedule
+    value: 3e-4
+    # _target_: optax.exponential_decay
+    # init_value: 1e-1
+    # transition_steps: 50e3
+    # decay_rate: 0.1
+    # end_value: 3e-4
+  # momentum: 0.9
+  eps: 1e-5
+
+base_name: ${env.scenario.name}/ff_mz/total_num_envs=${arch.total_num_envs}/optimizer=${system.optimizer._target_}/lr_schedule=${system.optimizer.learning_rate._target_}/vf_coef=${system.vf_coef}/total_buffer_size=${system.total_buffer_size}/total_batch_size=${system.total_batch_size}/rollout_length=${system.rollout_length}/epochs=${system.epochs}

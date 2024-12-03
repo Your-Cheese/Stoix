@@ -1,0 +1,5 @@
+system_name: ${env.env_name}/${env.scenario.task_name}/ff_mz/unbiased_hyperbolic
+
+# --- RL hyperparameters ---
+transform_method: unbiased # Transform method to use. Options: muzero, unbiased.
+transform_function: signed_hyperbolic # Transform function to use. Options: signed_hyperbolic, symlog.

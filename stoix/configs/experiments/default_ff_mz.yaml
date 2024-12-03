@@ -1,0 +1,12 @@
+defaults:
+  - logger: base_logger
+  - arch: anakin
+  - system: search/ff_mz
+  - network: muzero
+  - env: gymnax/mountain_car
+  - ${arch}/${env}_ff_mz
+  - _self_
+
+hydra:
+  searchpath:
+    - file://stoix/configs

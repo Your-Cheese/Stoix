@@ -1,0 +1,33 @@
+# Example of a hyperparameter sweep configuration file
+
+defaults:
+  - logger: base_logger
+  - arch: anakin
+  - system: search/ff_mz
+  - network: muzero
+  - env: gymnax/cartpole
+  - override hydra/sweeper: optuna
+  - override hydra/sweeper/sampler: tpe
+  - _self_
+
+hydra:
+  searchpath:
+      - file://stoix/configs
+  mode: MULTIRUN
+  sweeper:
+    direction: maximize
+    study_name: ${env.scenario.task_name}/${system.system_name}_sweep
+    storage: null
+    n_trials: 40
+    n_jobs: 5
+    sampler:
+      seed: ${arch.seed}
+    params:
+      arch.total_num_envs: choice(256, 512, 1024, 2048) # Total number of vectorised environments.
+      system.rollout_length: range(2, 11) # Number of environment steps per vectorised environment.
+      system.epochs: choice(256, 512, 1024, 2048) # Number of epochs to train for.
+      system.total_buffer_size: range(50_000, 500_000, step=25_000) # Total size of the replay buffer.
+      system.total_batch_size: choice(256, 512, 1024, 2048) # Total batch size.
+      system.vf_coef: range(0, 1, step=0.1)
+      system.priority_exponent: range(0, 1, step=0.1)
+      system.importance_sampling_exponent: range(0, 1, step=0.1)

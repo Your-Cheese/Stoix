@@ -1,0 +1,5 @@
+system_name: ${env.env_name}/${env.scenario.task_name}/ff_mz/prioritized_buffer
+
+# --- RL hyperparameters ---
+priority_exponent: 1 # exponent for the prioritised experience replay
+importance_sampling_exponent: 1 # exponent for the importance sampling weights

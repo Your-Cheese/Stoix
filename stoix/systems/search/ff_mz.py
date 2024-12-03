@@ -14,6 +14,8 @@ import optax
 import rlax
 import tensorflow_probability.substrates.jax as tfp
 from colorama import Fore, Style
+from flashbax import utils
+from flashbax.buffers import sum_tree
 from flashbax.buffers.trajectory_buffer import BufferState
 from jumanji.env import Environment
 from jumanji.types import TimeStep
@@ -52,7 +54,6 @@ from stoix.utils.jax_utils import (
 from stoix.utils.logger import LogEvent, StoixLogger
 from stoix.utils.multistep import batch_n_step_bootstrapped_returns
 from stoix.utils.total_timestep_checker import check_total_timesteps
-from stoix.utils.training import make_learning_rate
 from stoix.wrappers.episode_metrics import get_final_step_metrics
 
 tfd = tfp.distributions
@@ -68,7 +69,7 @@ def make_root_fn(
         params: MZParams,
         observation: chex.ArrayTree,
         _: chex.ArrayTree,  # This is the state of the environment and unused in MuZero
-        rng_key: chex.PRNGKey,
+        _rng_key: chex.PRNGKey,
     ) -> mctx.RootFnOutput:
         observation_embedding = representation_apply_fn(params.world_model_params, observation)
 
@@ -98,11 +99,10 @@ def make_recurrent_fn(
 ) -> mctx.RecurrentFn:
     def recurrent_fn(
         params: MZParams,
-        rng_key: chex.PRNGKey,
+        _rng_key: chex.PRNGKey,
         action: chex.Array,
         state_embedding: chex.ArrayTree,
     ) -> Tuple[mctx.RecurrentFnOutput, chex.ArrayTree]:
-
         next_state_embedding, next_reward_dist = dynamics_apply_fn(
             params.world_model_params, state_embedding, action
         )
@@ -129,16 +129,23 @@ def get_warmup_fn(
     env: Environment,
     params: MZParams,
     apply_fns: Tuple[
-        RepresentationApply, DynamicsApply, ActorApply, CriticApply, RootFnApply, SearchApply
+        RepresentationApply,
+        DynamicsApply,
+        ActorApply,
+        CriticApply,
+        RootFnApply,
+        SearchApply,
     ],
     buffer_add_fn: Callable,
     config: DictConfig,
 ) -> Callable:
-
     _, _, _, _, root_fn, search_apply_fn = apply_fns
 
     def warmup(
-        env_states: LogEnvState, timesteps: TimeStep, buffer_states: BufferState, keys: chex.PRNGKey
+        env_states: LogEnvState,
+        timesteps: TimeStep,
+        buffer_states: BufferState,
+        keys: chex.PRNGKey,
     ) -> Tuple[LogEnvState, TimeStep, BufferState, chex.PRNGKey]:
         def _env_step(
             carry: Tuple[LogEnvState, TimeStep, chex.PRNGKey], _: Any
@@ -152,6 +159,7 @@ def get_warmup_fn(
             search_output = search_apply_fn(params, policy_key, root)
             action = search_output.action
             search_policy = search_output.action_weights
+
             search_value = search_output.search_tree.node_values[:, mctx.Tree.ROOT_INDEX]
 
             # STEP ENVIRONMENT
@@ -203,7 +211,7 @@ def get_learner_fn(
         SearchApply,
     ],
     update_fn: optax.TransformUpdateFn,
-    buffer_fns: Tuple[Callable, Callable],
+    buffer_fns: Tuple[Callable, Callable, Callable],
     transform_pairs: Tuple[rlax.TxPair, rlax.TxPair],
     config: DictConfig,
 ) -> LearnerFn[ZLearnerState]:
@@ -218,7 +226,7 @@ def get_learner_fn(
         root_fn,
         search_apply_fn,
     ) = apply_fns
-    buffer_add_fn, buffer_sample_fn = buffer_fns
+    buffer_add_fn, buffer_sample_fn, buffer_set_priorities = buffer_fns
     critic_tx_pair, reward_tx_pair = transform_pairs
 
     def _update_step(learner_state: ZLearnerState, _: Any) -> Tuple[ZLearnerState, Tuple]:
@@ -234,6 +242,7 @@ def get_learner_fn(
             search_output = search_apply_fn(params, policy_key, root)
             action = search_output.action
             search_policy = search_output.action_weights
+
             search_value = search_output.search_tree.node_values[:, mctx.Tree.ROOT_INDEX]
 
             # STEP ENVIRONMENT
@@ -270,6 +279,7 @@ def get_learner_fn(
             def _loss_fn(
                 muzero_params: MZParams,
                 sequence: ExItTransition,
+                importance_weights: chex.Array,
             ) -> Tuple:
                 """Calculate the total MuZero loss."""
 
@@ -325,6 +335,10 @@ def get_learner_fn(
                     # episode end should be treated as an absorbing state
                     # where the value is 0
                     value_targets = value_targets * mask
+
+                    value_pred = critic_tx_pair.apply_inv(value_dist.probs)
+                    td_error = value_targets - value_pred
+
                     value_targets = critic_tx_pair.apply(value_targets)
                     value_loss = config.system.vf_coef * optax.softmax_cross_entropy(
                         value_dist.logits, value_targets
@@ -346,12 +360,19 @@ def get_learner_fn(
                     }
                     # UPDATE LOSS
                     total_loss = jax.tree_util.tree_map(
-                        lambda x, y: x + y.mean(), total_loss, curr_loss
+                        lambda x, y: x + (y * importance_weights).mean(),
+                        total_loss,
+                        curr_loss,
                     )
                     # Update the mask - This is to ensure that the loss is
                     # not updated for any steps after the episode is done
                     mask = mask * (1.0 - done.astype(jnp.float32))
-                    return (total_loss, next_state_embedding, muzero_params, mask), None
+                    return (
+                        total_loss,
+                        next_state_embedding,
+                        muzero_params,
+                        mask,
+                    ), td_error
 
                 targets = (
                     sequence.action[:, :-1],
@@ -369,13 +390,17 @@ def get_learner_fn(
                     "entropy_loss": jnp.array(0.0),
                 }
                 init_mask = jnp.ones((config.system.batch_size,))
-                (losses, _, _, _), _ = jax.lax.scan(
-                    unroll_fn, (init_total_loss, state_embedding, muzero_params, init_mask), targets
+                (losses, _, _, _), td_errors = jax.lax.scan(
+                    unroll_fn,
+                    (init_total_loss, state_embedding, muzero_params, init_mask),
+                    targets,
                 )
+
                 # Divide by the number of unrolled steps to ensure a consistent scale
                 # across different unroll lengths
                 losses = jax.tree_util.tree_map(
-                    lambda x: x / (config.system.sample_sequence_length - 1), losses
+                    lambda x: x / (config.system.sample_sequence_length - 1),
+                    losses,
                 )
 
                 total_loss = (
@@ -385,7 +410,12 @@ def get_learner_fn(
                     - losses["entropy_loss"]
                 )
 
-                return total_loss, losses
+                loss_info = losses | {
+                    "td_errors": td_errors,
+                    # "nan_indices": nan_indices,
+                }
+
+                return total_loss, loss_info
 
             params, opt_state, buffer_state, key = update_state
 
@@ -395,11 +425,33 @@ def get_learner_fn(
             sequence_sample = buffer_sample_fn(buffer_state, sample_key)
             sequence: ExItTransition = sequence_sample.experience
 
+            # CALCULATE IMPORTANCE WEIGHTS
+            normalized_priorities = sequence_sample.priorities / sum_tree.get(
+                buffer_state.priority_state, 0
+            )
+            buffer_batch_size, time_axis_size = utils.get_tree_shape_prefix(
+                buffer_state.experience, n_axes=2
+            )
+            importance_weights = jnp.power(
+                normalized_priorities
+                * jnp.where(buffer_state.is_full, time_axis_size, buffer_state.current_index),
+                -config.system.importance_sampling_exponent,
+            )
+            importance_weights /= jnp.max(importance_weights)
+
             # CALCULATE LOSS
             grad_fn = jax.grad(_loss_fn, has_aux=True)
             grads, loss_info = grad_fn(
                 params,
                 sequence,
+                importance_weights,
+            )
+
+            td_errors = loss_info.pop("td_errors")  # T, B
+            updated_priorities = jnp.absolute(td_errors)[0]
+
+            buffer_state = buffer_set_priorities(
+                buffer_state, sequence_sample.indices, updated_priorities
             )
 
             # Compute the parallel mean (pmean) over the batch.
@@ -411,7 +463,7 @@ def get_learner_fn(
             grads, loss_info = jax.lax.pmean((grads, loss_info), axis_name="device")
 
             # UPDATE PARAMS AND OPTIMISER STATE
-            updates, new_opt_state = update_fn(grads, opt_state)
+            updates, new_opt_state = update_fn(grads, opt_state, params)
             new_params = optax.apply_updates(params, updates)
 
             return (new_params, new_opt_state, buffer_state, key), loss_info
@@ -430,7 +482,9 @@ def get_learner_fn(
         metric = traj_batch.info
         return learner_state, (metric, loss_info)
 
-    def learner_fn(learner_state: ZLearnerState) -> AnakinExperimentOutput[ZLearnerState]:
+    def learner_fn(
+        learner_state: ZLearnerState,
+    ) -> AnakinExperimentOutput[ZLearnerState]:
         """Learner function."""
 
         batched_update_step = jax.vmap(_update_step, in_axes=(0, None), axis_name="batch")
@@ -457,6 +511,29 @@ def parse_search_method(config: DictConfig) -> Any:
         raise ValueError(f"Search method {config.system.search_method} not supported.")
 
     return search_method
+
+
+def parse_transform_method(config: DictConfig) -> Any:
+    """Parse transformation method from config."""
+    if config.system.transform_method.lower() == "muzero":
+        transform_method = rlax.muzero_pair
+    elif config.system.transform_method.lower() == "unbiased":
+        transform_method = rlax.unbiased_transform_pair
+    else:
+        raise ValueError(f"Transformation method {config.system.transform_method} not supported.")
+
+    if config.system.transform_function.lower() == "symlog":
+        transform_function = rlax.SIGNED_LOGP1_PAIR
+    elif config.system.transform_function.lower() == "signed_hyperbolic":
+        transform_function = rlax.SIGNED_HYPERBOLIC_PAIR
+    elif config.system.transform_function.lower() == "none":
+        transform_function = rlax.IDENTITY_PAIR
+    else:
+        raise ValueError(
+            f"Transformation function {config.system.transform_function} not supported."
+        )
+
+    return transform_method, transform_function
 
 
 def learner_setup(
@@ -496,15 +573,12 @@ def learner_setup(
         config.network.wm_network, action_dim=config.system.action_dim
     )
 
-    lr = make_learning_rate(
-        config.system.lr,
-        config,
-        config.system.epochs,
-    )
+    optimizer = hydra.utils.instantiate(config.system.optimizer)
 
     optim = optax.chain(
+        # optax.add_decayed_weights(config.system.weight_decay),
         optax.clip_by_global_norm(config.system.max_grad_norm),
-        optax.adam(lr, eps=1e-5),
+        optimizer,
     )
 
     # Initialise observation
@@ -537,17 +611,18 @@ def learner_setup(
     critic_network_apply_fn = critic_network.apply
 
     # Initialise tx pairs.
-    critic_tx_pair = rlax.muzero_pair(
+    transform_method, transform_function = parse_transform_method(config)
+    critic_tx_pair = transform_method(
         config.system.critic_vmin,
         config.system.critic_vmax,
         config.system.critic_num_atoms,
-        rlax.SIGNED_HYPERBOLIC_PAIR,
+        transform_function,
     )
-    reward_tx_pair = rlax.muzero_pair(
+    reward_tx_pair = transform_method(
         config.system.reward_vmin,
         config.system.reward_vmax,
         config.system.reward_num_atoms,
-        rlax.SIGNED_HYPERBOLIC_PAIR,
+        transform_function,
     )
 
     root_fn = make_root_fn(
@@ -610,15 +685,18 @@ def learner_setup(
     config.system.batch_size = config.system.total_batch_size // (
         n_devices * config.arch.update_batch_size
     )
-    buffer_fn = fbx.make_trajectory_buffer(
+
+    buffer_fn = fbx.make_prioritised_trajectory_buffer(
         max_size=config.system.buffer_size,
         min_length_time_axis=config.system.sample_sequence_length,
         sample_batch_size=config.system.batch_size,
         sample_sequence_length=config.system.sample_sequence_length,
         period=config.system.period,
         add_batch_size=config.arch.num_envs,
+        priority_exponent=config.system.priority_exponent,
+        device="gpu",
     )
-    buffer_fns = (buffer_fn.add, buffer_fn.sample)
+    buffer_fns = (buffer_fn.add, buffer_fn.sample, buffer_fn.set_priorities)
     buffer_states = buffer_fn.init(dummy_transition)
 
     # Get batched iterated update and replicate it to pmap it over cores.
@@ -638,6 +716,7 @@ def learner_setup(
     reshape_states = lambda x: x.reshape(
         (n_devices, config.arch.update_batch_size, config.arch.num_envs) + x.shape[1:]
     )
+
     # (devices, update batch size, num_envs, ...)
     env_states = jax.tree_util.tree_map(reshape_states, env_states)
     timesteps = jax.tree_util.tree_map(reshape_states, timesteps)
@@ -751,7 +830,7 @@ def run_experiment(_config: DictConfig) -> float:
         start_time = time.time()
 
         learner_output = learn(learner_state)
-        jax.block_until_ready(learner_output)
+        # jax.block_until_ready(learner_output)
 
         # Log the results of the training.
         elapsed_time = time.time() - start_time
@@ -782,7 +861,7 @@ def run_experiment(_config: DictConfig) -> float:
 
         # Evaluate.
         evaluator_output = evaluator(trained_params, eval_keys)
-        jax.block_until_ready(evaluator_output)
+        # jax.block_until_ready(evaluator_output)
 
         # Log the results of the evaluation.
         elapsed_time = time.time() - start_time
@@ -816,7 +895,7 @@ def run_experiment(_config: DictConfig) -> float:
         eval_keys = eval_keys.reshape(n_devices, -1)
 
         evaluator_output = absolute_metric_evaluator(best_params, eval_keys)
-        jax.block_until_ready(evaluator_output)
+        # jax.block_until_ready(evaluator_output)
 
         elapsed_time = time.time() - start_time
         t = int(steps_per_rollout * (eval_step + 1))
@@ -833,7 +912,9 @@ def run_experiment(_config: DictConfig) -> float:
 
 
 @hydra.main(
-    config_path="../../configs/default/anakin", config_name="default_ff_mz.yaml", version_base="1.2"
+    config_path="../../configs/experiments",
+    config_name="default_ff_mz.yaml",
+    version_base="1.2",
 )
 def hydra_entry_point(cfg: DictConfig) -> float:
     """Experiment entry point."""
