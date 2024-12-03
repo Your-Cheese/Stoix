@@ -3,7 +3,7 @@ defaults:
   - arch: anakin
   - system: search/ff_mz
   - network: muzero
-  - env: gymnax/mountain_car
+  - env: gymnax/cartpole
   - ${arch}/${env}_ff_mz
   - _self_
 
