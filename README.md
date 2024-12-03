@@ -1,5 +1,4 @@
-# CSCE-642: Deep Reinforcement Learning
-# Adapting Insights from DreamerV3 and REDQ into MuZero
+# CSCE-642: Adapting Insights from DreamerV3 and REDQ into MuZero
 ## Setup
 This project is based on the framework [Stoix](https://github.com/EdanToledo/Stoix/tree/main): Distributed Single-Agent Reinforcement Learning End-to-End in JAX, developed by Edan Toledo. 
 
