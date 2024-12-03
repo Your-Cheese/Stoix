@@ -9,6 +9,7 @@ from typing import Dict, List, Union
 import jax
 import neptune
 import numpy as np
+import tensorboard_logger
 import wandb
 from colorama import Fore, Style
 from jax.typing import ArrayLike
@@ -16,7 +17,6 @@ from marl_eval.json_tools import JsonLogger as MarlEvalJsonLogger
 from neptune.utils import stringify_unsupported
 from omegaconf import DictConfig
 from pandas.io.json._normalize import _simple_json_normalize as flatten_dict
-from tensorboard_logger import configure, log_value
 
 
 class LogEvent(Enum):
@@ -105,7 +105,13 @@ class BaseLogger(abc.ABC):
         data = flatten_dict(data, sep="/")
 
         for key, value in data.items():
-            self.log_stat(key, value, step, eval_step, event)
+            self.log_stat(
+                key,
+                value.item() if isinstance(value, jax.Array) else value,
+                step,
+                eval_step,
+                event,
+            )
 
     def stop(self) -> None:
         """Stop the logger."""
@@ -230,8 +236,8 @@ class TensorboardLogger(BaseLogger):
         tb_exp_path = get_logger_path(cfg, "tensorboard")
         tb_logs_path = os.path.join(cfg.logger.base_exp_path, f"{tb_exp_path}/{unique_token}")
 
-        configure(tb_logs_path)
-        self.log = log_value
+        self.logger = tensorboard_logger.Logger(tb_logs_path)
+        self.log = self.logger.log_value
 
     def log_stat(self, key: str, value: float, step: int, eval_step: int, event: LogEvent) -> None:
         t = step if event != LogEvent.EVAL else eval_step
@@ -322,6 +328,7 @@ class ConsoleLogger(BaseLogger):
         # Replace underscores with spaces and capitalise keys.
         keys = [k.replace("_", " ").capitalize() for k in data.keys()]
         # Round values to 3 decimal places if they are floats.
+        data = {k: v.item() if isinstance(v, jax.Array) else v for k, v in data.items()}
         values = [v if isinstance(v, int) else f"{float(v):.3f}" for v in data.values()]
         log_str = " | ".join([f"{k}: {v}" for k, v in zip(keys, values)])
 
