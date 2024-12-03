@@ -1,0 +1,5 @@
+system_name: ${env.env_name}/${env.scenario.task_name}/ff_mz/default_symlog
+
+# --- RL hyperparameters ---
+transform_method: muzero # Transform method to use. Options: muzero, unbiased.
+transform_function: symlog # Transform function to use. Options: signed_hyperbolic, symlog.

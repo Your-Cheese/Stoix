@@ -1,0 +1,19 @@
+defaults:
+  - logger: base_logger
+  - arch: anakin
+  - system: search/ff_mz
+  - network: muzero
+  - env: gymnax/breakout
+  - ${arch}/${env}_ff_mz
+  - _self_
+
+hydra:
+  searchpath:
+    - file://stoix/configs
+
+  mode: MULTIRUN
+  sweeper:
+    params:
+      arch.seed: range(0, 10)
+      +transformations@system: ff_mz_no_transform, ff_mz_default_hyperbolic, ff_mz_default_symlog, ff_mz_unbiased_hyperbolic, ff_mz_unbiased_symlog
+      # system: buffers/ff_mz_prioritized_buffer, buffers/ff_mz_unprioritized_buffer
