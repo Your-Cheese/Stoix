@@ -4,7 +4,7 @@
 # history. It also does not do tiling and encoding of actions in a 2D plane. A non-priority buffer is used as well.
 # Additionally, the search method used can be chosen between muzero mcts and gumbel mcts from mctx.
 
-system_name: ${env.scenario.name}/ff_mz/total_num_envs=${arch.total_num_envs}/optimizer=${system.optimizer._target_}/lr_schedule=${system.optimizer.learning_rate._target_}/priority_exponent=${system.priority_exponent}/vf_coef=${system.vf_coef}/total_buffer_size=${system.total_buffer_size}/total_batch_size=${system.total_batch_size}/rollout_length=${system.rollout_length}/epochs=${system.epochs}/unmasked_episode_done_higher_importance_weights # Name of the system.
+system_name: ${env.scenario.name}/ff_mz/total_num_envs=${arch.total_num_envs}/optimizer=${system.optimizer._target_}/lr_schedule=${system.optimizer.learning_rate._target_}/priority_exponent=${system.priority_exponent}/vf_coef=${system.vf_coef}/total_buffer_size=${system.total_buffer_size}/total_batch_size=${system.total_batch_size}/rollout_length=${system.rollout_length}/epochs=${system.epochs} # Name of the system.
 
 # --- RL hyperparameters ---
 rollout_length: 8 # Number of environment steps per vectorised environment.
@@ -48,5 +48,3 @@ optimizer:
     # end_value: 3e-4
   # momentum: 0.9
   eps: 1e-5
-
-base_name: ${env.scenario.name}/ff_mz/total_num_envs=${arch.total_num_envs}/optimizer=${system.optimizer._target_}/lr_schedule=${system.optimizer.learning_rate._target_}/vf_coef=${system.vf_coef}/total_buffer_size=${system.total_buffer_size}/total_batch_size=${system.total_batch_size}/rollout_length=${system.rollout_length}/epochs=${system.epochs}
