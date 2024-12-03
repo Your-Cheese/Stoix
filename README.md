@@ -23,7 +23,8 @@ python stoix/systems/search/ff_mz_ens.py system=search/ff_mz_ens_bo arch=anakin_
 To adjust number of learners, please modify `num_learners` in respective configuration file in `configs/system/search` that starts with `ff_mz_ens_`.
 
 ## Acknowledgments
-
+We cannot thank enough to the author of the Stoix environment who provided solid framework for Reinforced Learning research.
+If you use Stoix in your project, please cite:
 ```bibtex
 @misc{toledo2024stoix,
     title={Stoix: Distributed Single-Agent Reinforcement Learning End-to-End in JAX},
